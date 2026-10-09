@@ -122,10 +122,32 @@ class Host(unittest.TestCase):
         self.assertEqual(gg.cached("k", 10, produce, now=200), [1, 2])
         self.assertEqual(len(calls), 2)
 
-    def test_handoff_refused_until_droidtop_offers_it(self):
-        self.assertFalse(gg.hand_off("magnet:?xt=urn:btih:ab", "x"))
-        self.host.handoff = True
-        self.assertTrue(gg.hand_off("magnet:?xt=urn:btih:ab", "x"))
+    def test_handoff(self):
+        uri = "magnet:?xt=urn:btih:ab"
+        self.assertEqual(gg.hand_off(uri, "x"), (True, None))
+        self.assertEqual(self.host.calls[-1], ("apps", "view", {"uri": uri, "title": "x"}))
+        self.host.handoff = "none"
+        self.assertEqual(gg.hand_off(uri, "x"), (False, "no app opens magnet links."))
+        page = json.loads(gg.handoff_result(uri, "x", "Opened")["values"]["view"])
+        self.assertEqual(page["sections"][0]["items"][1]["value"], uri)
+        self.host.handoff = "denied"
+        self.assertEqual(gg.hand_off(uri, "x"), (False, gg.HANDOFF_DENIED))
+        self.host.handoff = False
+        self.assertEqual(gg.hand_off(uri, "x"), (False, gg.NO_HANDOFF))
+
+    def test_split_sets(self):
+        self.assertEqual(gg.split_part("Game_--_.part2.rar"), ("game_--_.rar", 2))
+        self.assertEqual(gg.split_part("Game.7z.003"), ("game.7z", 3))
+        self.assertIsNone(gg.split_part("Game.rar"))
+        self.assertTrue(gg.is_split_set(["G.part2.rar", "G.part1.rar"]))
+        self.assertFalse(gg.is_split_set(["G.part1.rar", "G.part3.rar"]))
+        self.assertFalse(gg.is_split_set(["G.part1.rar", "H.part2.rar"]))
+        many = gg.downloads_result("m", [{"url": "https://a/1", "fileName": "G.part1.rar"}, {"url": "https://a/2", "fileName": "G.part2.rar"}])
+        self.assertEqual([d["unpack"] for d in json.loads(many["values"]["downloads"])], ["archive", "archive"])
+        loose = gg.downloads_result("m", [{"url": "https://a/1", "fileName": "a.bin"}, {"url": "https://a/2", "fileName": "b.bin"}])
+        self.assertNotIn("unpack", json.loads(loose["values"]["downloads"])[0])
+        one = gg.downloads_result("m", [{"url": "https://a/1", "fileName": "a.zip"}])
+        self.assertIn("download", one["values"])
 
     def test_pacing_waits_per_host(self):
         slept = []

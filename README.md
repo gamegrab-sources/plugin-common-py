@@ -26,10 +26,18 @@ Tests: `python3 test_gamegrab.py`.
 
 ## Handing links to other apps
 
-droidtop has no torrent client and, as of this version, no host call that opens a
-link in another app. `hand_off` asks for `apps.view {uri, chooser, title}`
-(requested from droidtop) and the plugins show the link to copy while droidtop
-refuses it.
+droidtop has no torrent client. `hand_off` and `handoff_result` use droidtop's
+`apps.view {uri, title?}` (permission "Open links in other apps"), which shows
+Android's chooser for a magnet or web link during a call the person started. When
+droidtop is older, the permission is refused, or no app takes the link, the
+plugin shows the link to copy and says why.
+
+## Split releases
+
+`downloads_result` returns several captured downloads as one acquire
+(`downloads`, at most 16); when the names are every part of one split archive
+(`X.part1.rar` ..., `X.7z.001` ...) each is marked `unpack: "archive"`, so droidtop
+joins and unpacks byte-split parts and places RAR volumes together.
 
 ## Licence
 

@@ -21,7 +21,7 @@ import threading
 import time
 from urllib.parse import quote, quote_plus, unquote, urljoin, urlparse
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 # ---------------------------------------------------------------- host calls
 
@@ -264,21 +264,79 @@ def open_in_session(url):
     return download if isinstance(download, dict) else None
 
 
-# Handing a link to another app. droidtop has no torrent client and, as of 2026-10-09,
-# no host call that opens a link (a magnet, or a page) in another app through Android's
-# chooser: Droidtop/tracker issue "apps.view" asks for one. Until it exists the call is
-# refused and the plugin shows the link for the person to copy.
-HANDOFF_API = ("apps", "view")
+# Handing a link to another app: droidtop has no torrent client, so a magnet goes to a torrent
+# app the person installed, and a page that needs a browser to the browser. droidtop's
+# `apps.view {uri, title?}` (docs/plugin-api.md 3 F2, permission "Open links in other apps",
+# Droidtop/tracker#418) shows Android's chooser, for https, http and magnet links only and only
+# during a call the person started (a button's job). A droidtop without it, a refused
+# permission, or no app that takes the link: the plugin shows the link to copy, with the reason.
+
+NO_HANDOFF = "This version of droidtop cannot open links in other apps."
+HANDOFF_DENIED = 'Allow "Open links in other apps" on this plugin\'s Permissions page to open it directly.'
 
 
 def hand_off(uri, title):
-    """Asks droidtop to open `uri` in another app, Android's chooser listing the apps that take
-    it. True when droidtop did; False when it cannot (yet)."""
+    """Asks droidtop to open `uri` in another app through Android's chooser: (opened, reason),
+    `reason` saying why not when it was not opened."""
+    args = {"uri": uri}
+    if title:
+        args["title"] = title[:200]
     try:
-        data = call(HANDOFF_API[0], HANDOFF_API[1], {"uri": uri, "chooser": True, "title": title})
-    except HostError:
+        data = call("apps", "view", args)
+    except HostError as e:
+        return False, HANDOFF_DENIED if e.code == "PERMISSION_DENIED" else NO_HANDOFF
+    if data.get("opened") is True:
+        return True, None
+    return False, str(data.get("reason") or "No app on this device opens this link") + "."
+
+
+def handoff_result(uri, title, opened_message, hint=""):
+    """A job's result for a hand-off button: a message when it opened, else a page with the link
+    to copy and why."""
+    opened, reason = hand_off(uri, title)
+    if opened:
+        return done(opened_message)
+    why = reason.rstrip(".") + "." + (" " + hint if hint else "")
+    return done("Copy the link into the app", view=handoff_fallback(title or "Link", uri, why))
+
+
+# Split releases (docs/plugin-api.md 1.6, acquire `downloads`, Droidtop/tracker#419): with
+# `unpack: "archive"` on every file, droidtop joins byte-split parts (X.7z.001 ...) and unpacks
+# them, and places RAR volumes (X.part1.rar ...) together; the names must be the parts of one
+# archive numbered 1 to N without a gap, or droidtop refuses the job. At most 16 files.
+MAX_DOWNLOADS = 16
+
+
+def split_part(name):
+    """`X.part3.rar` -> ("x.rar", 3); `X.7z.002` -> ("x.7z", 2); anything else None."""
+    name = (name or "").strip().lower()
+    m = re.fullmatch(r"(.+)\.part0*(\d+)\.rar", name)
+    if m:
+        return m.group(1) + ".rar", int(m.group(2))
+    m = re.fullmatch(r"(.+\.(?:7z|zip|rar))\.0*(\d+)", name)
+    if m:
+        return m.group(1), int(m.group(2))
+    return None
+
+
+def is_split_set(names):
+    """The names are every part, 1 to N, of one split archive."""
+    parts = [split_part(n) for n in names]
+    if not parts or any(p is None for p in parts) or len({p[0] for p in parts}) != 1:
         return False
-    return data.get("opened", data.get("launched")) is not False
+    return sorted(p[1] for p in parts) == list(range(1, len(parts) + 1))
+
+
+def downloads_result(message, downloads, **values):
+    """A job's result for several downloads as one Downloads job; split parts are marked to be
+    joined and unpacked."""
+    downloads = [dict(d) for d in downloads]
+    if len(downloads) > 1 and is_split_set([d.get("fileName") for d in downloads]):
+        for d in downloads:
+            d["unpack"] = "archive"
+    if len(downloads) == 1:
+        return done(message, download=downloads[0], **values)
+    return done(message, downloads=downloads, **values)
 
 
 # ---------------------------------------------------------------- replies

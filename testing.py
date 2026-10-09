@@ -11,7 +11,7 @@ class FakeHost:
         self.files = {}
         self.calls = []
         self.signed_in = signed_in
-        self.handoff = False  # droidtop's apps.view: refused until it exists
+        self.handoff = True  # droidtop's apps.view; see the "apps view" case below
         self.captured = None
         self.notes = []
         self.max_body = 128 * 1024
@@ -76,15 +76,22 @@ class FakeHost:
             self.signed_in = False
             return {"ok": True, "data": {"cleared": True}}
         if key == "web.session open_in_session":
-            if self.captured is None:
+            captured = self.captured(args["url"]) if callable(self.captured) else self.captured
+            if captured is None:
                 return {"ok": True, "data": {"captured": False}}
-            return {"ok": True, "data": {"captured": True, "download": dict(self.captured, url=self.captured.get("url", args["url"]))}}
+            return {"ok": True, "data": {"captured": True, "download": dict(captured, url=captured.get("url", args["url"]))}}
         if key == "notify post":
             self.notes.append(args)
             return {"ok": True, "data": {"posted": True}}
         if key == "apps view":
-            if not self.handoff:
+            # handoff: False = an older droidtop without apps.view, "denied" = permission refused,
+            # "none" = no app takes the link, True = opened.
+            if self.handoff is False:
                 return {"ok": False, "error": {"code": "UNSUPPORTED", "message": "no such host api: apps view"}}
+            if self.handoff == "denied":
+                return {"ok": False, "error": {"code": "PERMISSION_DENIED", "message": "not allowed"}}
+            if self.handoff == "none":
+                return {"ok": True, "data": {"opened": False, "reason": "no app opens magnet links"}}
             return {"ok": True, "data": {"opened": True}}
         return {"ok": False, "error": {"code": "UNSUPPORTED", "message": "fake host: " + key}}
 
