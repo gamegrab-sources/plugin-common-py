@@ -1,6 +1,7 @@
 """Tests for gamegrab.py (python3 test_gamegrab.py). The pages below are small hand-written
 samples in the markup the sites use, not copies of their pages."""
 import json
+import os
 import unittest
 
 import embed
@@ -168,7 +169,7 @@ class Plugin(unittest.TestCase):
 class Embed(unittest.TestCase):
     def test_embed(self):
         source = "import json\nimport gamegrab as gg  # embedded by build.sh\nX = gg.name_key('A b')\n"
-        with open("gamegrab.py", encoding="utf-8") as f:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gamegrab.py"), encoding="utf-8") as f:
             out = embed.embed(source, f.read())
         scope = {}
         exec(compile(out, "plugin.py", "exec"), scope)
