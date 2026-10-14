@@ -199,6 +199,61 @@ class Messages(unittest.TestCase):
         self.assertEqual(gg.unreadable("Nyaa", KeyError("title")), "Nyaa sent a page this plugin could not read. Try again later.")
 
 
+class Notices(unittest.TestCase):
+    def tearDown(self):
+        gg._set_features({})
+
+    def test_old_droidtop_gets_exactly_one_info_row(self):
+        gg._set_features({})
+        node = gg.notice("n", "Needs a torrent app", tone="caution", subtitle="Downloads open in your torrent app.", details="x")
+        self.assertEqual(node["type"], "info")
+        self.assertEqual(node["title"], "Needs a torrent app")
+        self.assertNotIn("details", node)
+        doc = gg.view("T", [node])
+        self.assertEqual(len(doc["sections"][0]["items"]), 1)
+
+    def test_new_droidtop_gets_the_notice(self):
+        gg._set_features({"host": {"viewFeatures": ["notice", "confirm"]}})
+        node = gg.notice("n", "Sign in to download", tone="caution", details="Members only.", action=gg.view_action("signin"), banner=True)
+        self.assertEqual(node["type"], "notice")
+        self.assertEqual(node["placement"], "banner")
+        self.assertEqual(node["action"]["op"], "signin")
+        data = gg.reply_notice("Signed in", "Signed in")
+        self.assertEqual(data["message"], "Signed in")
+        self.assertEqual(data["notice"]["title"], "Signed in")
+
+    def test_handle_reads_the_envelope_features(self):
+        plugin = gg.Plugin("Test")
+        plugin.on("library.sources", "browse")(lambda args: gg.ok(gg.view("T", [gg.notice("n", "Hello")])))
+        reply = plugin.handle({"point": "library.sources", "op": "browse", "args": {}, "host": {"viewFeatures": ["notice"]}})
+        self.assertEqual(reply["data"]["sections"][0]["items"][0]["type"], "notice")
+        old = plugin.handle({"point": "library.sources", "op": "browse", "args": {}})
+        self.assertEqual(old["data"]["sections"][0]["items"][0]["type"], "info")
+
+    def test_error_carries_what_the_person_reads(self):
+        reply = gg.error("PERMISSION_DENIED", "net.any refused", title="Not allowed", permission="net.any")
+        self.assertEqual(reply["error"]["title"], "Not allowed")
+        self.assertEqual(reply["error"]["permission"], "net.any")
+        self.assertNotIn("subtitle", reply["error"])
+
+    def test_lint_view_reads_droidtops_limits(self):
+        limits = gg.view_limits()
+        self.assertEqual(limits["lengths"]["noticeTitle"], 60)
+        gg._set_features({"host": {"viewFeatures": ["notice"]}})
+        doc = gg.view("T", [
+            gg.info("i", "Info"),
+            gg.notice("c1", "A" * 70, tone="caution"),
+            gg.notice("c2", "Second caution", tone="caution"),
+            gg.notice("r", "Has full access"),
+        ])
+        lines = gg.lint_view(doc)
+        self.assertTrue(any("moved" in l for l in lines))
+        self.assertTrue(any("cut at 60" in l for l in lines))
+        self.assertTrue(any("differ in tone" in l for l in lines))
+        self.assertTrue(any("droidtop's own title" in l for l in lines))
+        self.assertEqual(gg.lint_view(gg.view("T", [gg.notice("ok", "Fine")])), [])
+
+
 class Embed(unittest.TestCase):
     def test_embed(self):
         source = "import json\nimport gamegrab as gg  # embedded by build.sh\nX = gg.name_key('A b')\n"

@@ -21,7 +21,7 @@ import threading
 import time
 from urllib.parse import quote, quote_plus, unquote, urljoin, urlparse
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 # ---------------------------------------------------------------- host calls
 
@@ -349,8 +349,15 @@ def ok(data=None):
     return {"ok": True, "data": data or {}}
 
 
-def error(code, message):
-    return {"ok": False, "error": {"code": code, "message": message}}
+def error(code, message, title=None, subtitle=None, permission=None, action=None):
+    """An error reply. `title` and `subtitle` are what the person reads (droidtop draws an error as a caution
+    notice); `permission` names the declared permission a PERMISSION_DENIED is about, so droidtop opens its grant;
+    `action` is a view action offered with SIGN_IN_REQUIRED as "Sign in" (droidtop docs/plugin-api.md 1.3)."""
+    err = {"code": code, "message": message}
+    for key, value in (("title", title), ("subtitle", subtitle), ("permission", permission), ("action", action)):
+        if value is not None:
+            err[key] = value
+    return {"ok": False, "error": err}
 
 
 def done(message, **values):
@@ -463,6 +470,119 @@ def cut(value, limit):
     return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
 
 
+# ---------------------------------------------------------------- notices (droidtop docs/plugin-api.md 1.6)
+
+_call = threading.local()
+
+
+def view_features():
+    """What the droidtop answering this call can draw (`host.viewFeatures` of the envelope): an empty set for a
+    droidtop older than notices, so every helper below keeps the old form there."""
+    return getattr(_call, "features", frozenset())
+
+
+def _set_features(envelope):
+    _call.features = frozenset((envelope.get("host") or {}).get("viewFeatures") or [])
+
+
+def notice(id, title, tone="info", subtitle=None, details=None, action=None, banner=False):
+    """A condition the person should know about, drawn as droidtop's own notice card named after the plugin.
+    `tone` is "info" or "caution". On a droidtop without notices it is the old info row, so a view never shows
+    both. Lengths and counts: droidtop's plugin-view-limits.json (see `lint_view`)."""
+    if "notice" not in view_features():
+        return info(id, title, subtitle=subtitle)
+    node = {"type": "notice", "id": id, "title": title, "tone": tone}
+    if banner:
+        node["placement"] = "banner"
+    for key, value in (("subtitle", subtitle), ("details", details), ("action", action)):
+        if value is not None:
+            node[key] = value
+    return node
+
+
+def reply_notice(message, title, tone="info", subtitle=None, details=None):
+    """`done`/`ok` data for a call that says something: `notice` for a droidtop that draws it, and `message` for one
+    that does not (it ignores `message` when it draws the notice)."""
+    data = {"message": message}
+    if "notice" in view_features():
+        n = {"tone": tone, "title": title}
+        if subtitle:
+            n["subtitle"] = subtitle
+        if details:
+            n["details"] = details
+        data["notice"] = n
+    return data
+
+
+_LIMITS_FILE = "plugin-view-limits.json"
+
+
+def view_limits(path=None):
+    """droidtop's view limits: the copy of its docs/view-limits/plugin-view-limits.json beside this file
+    (sync-limits.sh refreshes it), or `path`."""
+    import os
+
+    if path is None:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), _LIMITS_FILE)
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def lint_view(view_doc, limits=None, explain=False):
+    """What droidtop would cut, drop or move when it draws `view_doc`, as plain sentences in the words of its
+    plugin messages; an empty list when it draws the view as written. `explain=True` prints them too."""
+    limits = limits or view_limits()
+    lengths, counts = limits["lengths"], limits["counts"]
+    reserved = {t.lower() for t in limits["reservedTitles"]}
+    out = []
+    left = counts["noticesPerView"]
+    banners = counts["bannersPerPage"]
+    sections = view_doc.get("sections") or []
+    if len(sections) > counts["sections"]:
+        out.append("only the first %d sections are drawn" % counts["sections"])
+    for section_doc in sections[: counts["sections"]]:
+        items = section_doc.get("items") or []
+        kept = []
+        for index, node in enumerate(items):
+            if node.get("type") != "notice":
+                continue
+            nid = node.get("id")
+            title = node.get("title") or ""
+            if title.lower() in reserved:
+                out.append('notice "%s" uses droidtop\'s own title "%s" and was drawn as a plain row' % (nid, title))
+                continue
+            for key, limit in (("title", lengths["noticeTitle"]), ("subtitle", lengths["noticeSubtitle"]), ("details", lengths["noticeDetails"])):
+                if len(node.get(key) or "") > limit:
+                    out.append('notice "%s": %s was cut at %d characters' % (nid, key, limit))
+            tone = node.get("tone", "info")
+            if tone not in limits["tones"]:
+                out.append('notice "%s": tone "%s" is not info or caution and was drawn as info' % (nid, tone))
+                tone = "info"
+            if index != len(kept):
+                out.append('notice "%s" was moved to the top of its section' % nid)
+            if len(kept) >= counts["noticesPerSection"]:
+                out.append('notice "%s" was dropped: at most %d notices in a section' % (nid, counts["noticesPerSection"]))
+            elif tone in kept:
+                out.append('notice "%s" was dropped: a section\'s two notices must differ in tone' % nid)
+            elif left <= 0:
+                out.append('notice "%s" was dropped: at most %d notices in a view' % (nid, counts["noticesPerView"]))
+            else:
+                if node.get("placement") == "banner":
+                    if banners <= 0:
+                        out.append('notice "%s" was drawn in its section: one banner a page' % nid)
+                    else:
+                        banners -= 1
+                kept.append(tone)
+                left -= 1
+        for node in items:
+            if node.get("type") != "notice" and len(node.get("title") or "") > lengths["title"]:
+                out.append('"%s": title was cut at %d characters' % (node.get("id"), lengths["title"]))
+    if explain:
+        for line in out:
+            print(line)
+    return out
+
+
 def handoff_fallback(title, uri, why):
     """The page shown when droidtop cannot open a link in another app: the link itself, to copy."""
     return view(
@@ -502,6 +622,7 @@ class Plugin:
         return register
 
     def handle(self, envelope):
+        _set_features(envelope)
         point = envelope.get("point")
         op = envelope.get("op")
         args = envelope.get("args") or {}
@@ -516,6 +637,7 @@ class Plugin:
             return error("FAILED", unreadable(self.label, e))
 
     def run_job(self, job_id, envelope, report):
+        _set_features(envelope)
         point = envelope.get("point")
         op = envelope.get("op")
         args = envelope.get("args") or {}

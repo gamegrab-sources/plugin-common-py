@@ -55,3 +55,17 @@ joins and unpacks byte-split parts and places RAR volumes together.
 ## Licence
 
 GPL-3.0, see LICENSE.
+
+## Notices and the view limits
+
+`notice(id, title, tone, subtitle, details, action, banner)` is droidtop's notice
+node (droidtop docs/plugin-api.md 1.6): a condition drawn as droidtop's own card,
+named after the plugin. It reads `host.viewFeatures` from the call (`view_features()`)
+and on a droidtop without notices returns the old info row, so a view never shows
+both. `reply_notice` gives a call's reply both forms. `error(code, message, title,
+subtitle, permission, action)` carries what the person reads of an error.
+
+`lint_view(view)` says what droidtop would cut, drop or move to draw a view, in the
+words of its plugin messages. It reads `plugin-view-limits.json`, a copy of
+droidtop's `docs/view-limits/plugin-view-limits.json` (the one source of those
+numbers); `sync-limits.sh` refreshes it, nothing edits it by hand.
