@@ -11,7 +11,7 @@ class FakeHost:
         self.files = {}
         self.calls = []
         self.signed_in = signed_in
-        self.handoff = True  # droidtop's apps.view; see the "apps view" case below
+        self.handoff = True  # droidtop's link.open; see the "link open" case below
         self.captured = None
         self.notes = []
         self.max_body = 128 * 1024
@@ -33,7 +33,7 @@ class FakeHost:
     def __call__(self, api, op, args, version):
         self.calls.append((api, op, args))
         key = api + " " + op
-        if key in ("net http", "web.session fetch"):
+        if key in ("net request", "web.session fetch"):
             if key == "web.session fetch" and not self.signed_in:
                 status, body = 403, "<title>Just a moment...</title>"
             else:
@@ -51,7 +51,7 @@ class FakeHost:
             job = "j%d" % len(self.jobs)
             self.jobs[job] = True
             return {"ok": True, "data": {"jobId": job, "name": args["name"]}}
-        if key == "plugins job_status":
+        if key == "job get_status":
             return {"ok": True, "data": {"done": True, "ok": True, "data": {}}}
         if key == "data read":
             if args["name"] not in self.files:
@@ -67,7 +67,7 @@ class FakeHost:
         if key == "data delete":
             self.files.pop(args["name"], None)
             return {"ok": True, "data": {"deleted": True}}
-        if key == "web.session status":
+        if key == "web.session get_status":
             return {"ok": True, "data": {"signedIn": self.signed_in}}
         if key == "web.session sign_in":
             self.signed_in = True
@@ -83,11 +83,11 @@ class FakeHost:
         if key == "notify post":
             self.notes.append(args)
             return {"ok": True, "data": {"posted": True}}
-        if key == "apps view":
-            # handoff: False = an older droidtop without apps.view, "denied" = permission refused,
+        if key == "link open":
+            # handoff: False = an older droidtop without link.open, "denied" = permission refused,
             # "none" = no app takes the link, True = opened.
             if self.handoff is False:
-                return {"ok": False, "error": {"code": "UNSUPPORTED", "message": "no such host api: apps view"}}
+                return {"ok": False, "error": {"code": "UNSUPPORTED", "message": "no such host api: link open"}}
             if self.handoff == "denied":
                 return {"ok": False, "error": {"code": "PERMISSION_DENIED", "message": "not allowed"}}
             if self.handoff == "none":
@@ -96,7 +96,7 @@ class FakeHost:
         return {"ok": False, "error": {"code": "UNSUPPORTED", "message": "fake host: " + key}}
 
     def requests(self):
-        return [a["url"] for api, op, a in self.calls if (api, op) in (("net", "http"), ("web.session", "fetch"), ("net", "download"))]
+        return [a["url"] for api, op, a in self.calls if (api, op) in (("net", "request"), ("web.session", "fetch"), ("net", "download"))]
 
 
 def install(gg, host):

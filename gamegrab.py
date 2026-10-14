@@ -21,7 +21,7 @@ import threading
 import time
 from urllib.parse import quote, quote_plus, unquote, urljoin, urlparse
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # ---------------------------------------------------------------- host calls
 
@@ -110,7 +110,7 @@ def http(url, method="GET", headers=None, body=None, session=False, timeout_ms=3
         args["headers"] = headers
     if body is not None:
         args["body"] = body
-    data = call("web.session" if session else "net", "fetch" if session else "http", args)
+    data = call("web.session" if session else "net", "fetch" if session else "request", args)
     return Answer(
         int(data.get("status") or 0),
         str(data.get("url") or url),
@@ -127,14 +127,14 @@ def download_text(url, name, timeout_s=90):
     job = call("net", "download", {"url": url, "name": name})["jobId"]
     deadline = _clock() + timeout_s
     while True:
-        status = call("plugins", "job_status", {"jobId": job})
+        status = call("job", "get_status", {"jobId": job})
         if status.get("done"):
             if status.get("ok") is False:
                 raise HostError(str(status.get("code") or "FAILED"), str(status.get("message") or "the download failed"))
             break
         if _clock() > deadline:
             try:
-                call("plugins", "job_cancel", {"jobId": job})
+                call("job", "cancel", {"jobId": job})
             except HostError:
                 pass
             raise HostError("TIMEOUT", "the page took too long to download")
@@ -158,7 +158,10 @@ def get_page(url, scratch_name, session=False):
 
 # ---------------------------------------------------------------- the plugin's own data
 
-_CHUNK = 120 * 1024
+# droidtop's data.read answers in base64 inside a JSON string, which crosses the broker as UTF-16: a
+# 120 KiB chunk came back as a 320 KB binder reply (logcat "Large reply transaction of 327808 bytes",
+# BlueStacks, 2026-10-14). 48 KiB keeps each reply near 128 KB.
+_CHUNK = 48 * 1024
 
 
 def read_bytes(name):
@@ -240,7 +243,7 @@ def notify(title, text):
 
 
 def signed_in():
-    return call("web.session", "status", {}).get("signedIn") is True
+    return call("web.session", "get_status", {}).get("signedIn") is True
 
 
 def sign_in(url, done_cookie=None):
@@ -271,8 +274,8 @@ def open_in_session(url):
 # during a call the person started (a button's job). A droidtop without it, a refused
 # permission, or no app that takes the link: the plugin shows the link to copy, with the reason.
 
-NO_HANDOFF = "This version of droidtop cannot open links in other apps."
-HANDOFF_DENIED = 'Allow "Open links in other apps" on this plugin\'s Permissions page to open it directly.'
+NO_HANDOFF = "This droidtop cannot open links in other apps."
+HANDOFF_DENIED = 'Turn on "Open links in other apps" in this plugin\'s Permissions to open it directly.'
 
 
 def hand_off(uri, title):
@@ -282,7 +285,7 @@ def hand_off(uri, title):
     if title:
         args["title"] = title[:200]
     try:
-        data = call("apps", "view", args)
+        data = call("link", "open", args)
     except HostError as e:
         return False, HANDOFF_DENIED if e.code == "PERMISSION_DENIED" else NO_HANDOFF
     if data.get("opened") is True:
@@ -360,6 +363,26 @@ def done(message, **values):
 
 def failed(message):
     return {"ok": False, "error": message}
+
+
+def http_error(site, status):
+    """A site's HTTP failure in plain words, for the line droidtop shows under the source."""
+    if status in (401, 403):
+        return "%s refused the request. Try again later." % site
+    if status in (404, 410):
+        return "%s no longer has that page." % site
+    if status == 429:
+        return "%s asks to slow down. Try again in a minute." % site
+    if status >= 500 or status == 0:
+        return "%s is not answering right now. Try again later." % site
+    return "%s sent an error (%d). Try again later." % (site, status)
+
+
+def unreadable(site, e=None):
+    """A page the plugin could not read: the reason goes to the log, never on screen."""
+    if e is not None:
+        print("gamegrab: %s: unreadable answer: %r" % (site, e))
+    return "%s sent a page this plugin could not read. Try again later." % site
 
 
 # ---------------------------------------------------------------- views (docs/plugin-api.md 1.6)
@@ -490,7 +513,7 @@ class Plugin:
         except HostError as e:
             return error("PERMISSION_DENIED" if e.code == "PERMISSION_DENIED" else "FAILED", e.message)
         except (ValueError, KeyError, IndexError) as e:
-            return error("FAILED", "%s answered with something unexpected (%s)" % (self.label, e))
+            return error("FAILED", unreadable(self.label, e))
 
     def run_job(self, job_id, envelope, report):
         point = envelope.get("point")
@@ -504,7 +527,7 @@ class Plugin:
         except HostError as e:
             return failed(e.message)
         except (ValueError, KeyError, IndexError) as e:
-            return failed("%s answered with something unexpected (%s)" % (self.label, e))
+            return failed(unreadable(self.label, e))
         finally:
             self.cancelled.discard(job_id)
 
@@ -637,7 +660,7 @@ def magnet_hash(uri):
     return m.group(1).lower() if m else None
 
 
-TORRENT_NOTE = "droidtop has no torrent client: this hands the link to a torrent app you have installed."
+TORRENT_NOTE = "Opens in your torrent app."
 
 
 # ---------------------------------------------------------------- XenForo forums

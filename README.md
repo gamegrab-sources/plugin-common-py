@@ -5,7 +5,7 @@ What the gamegrab-sources Python plugins for
 droidtop.
 
 - `gamegrab.py`: the shared module. Host calls through droidtop's broker
-  (`net.http`, `net.download`, `web.session`, the data API, notifications), per-site
+  (`net.request`, `net.download`, `web.session`, the data API, notifications), per-site
   request pacing, a cache that falls back to a stale copy when a site is down, view
   documents and replies (droidtop docs/plugin-api.md 1.3 and 1.6), the plugin's
   entry points (`handle`, `start_job`, `cancel_job`), lenient RSS reading, magnet
@@ -27,10 +27,23 @@ Tests: `python3 test_gamegrab.py`.
 ## Handing links to other apps
 
 droidtop has no torrent client. `hand_off` and `handoff_result` use droidtop's
-`apps.view {uri, title?}` (permission "Open links in other apps"), which shows
+`link.open {uri, title?}` (permission "Open links in other apps"), which shows
 Android's chooser for a magnet or web link during a call the person started. When
 droidtop is older, the permission is refused, or no app takes the link, the
 plugin shows the link to copy and says why.
+
+## Host call names
+
+The module calls droidtop's host APIs by the names of contract 2.1 (droidtop
+docs/plugin-api.md 3 "Naming": `net.request`, `job.get_status`, `job.cancel`,
+`web.session.get_status`, `link.open`); droidtop answers the old names only until
+contract 2.2. So it needs droidtop 0.2.0-dev.1767 or newer.
+
+## Messages
+
+`http_error(site, status)` and `unreadable(site)` give a failure in plain words for
+the line droidtop shows under a source; a site's own page text and an exception's
+text never reach the screen.
 
 ## Split releases
 

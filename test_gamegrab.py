@@ -125,7 +125,7 @@ class Host(unittest.TestCase):
     def test_handoff(self):
         uri = "magnet:?xt=urn:btih:ab"
         self.assertEqual(gg.hand_off(uri, "x"), (True, None))
-        self.assertEqual(self.host.calls[-1], ("apps", "view", {"uri": uri, "title": "x"}))
+        self.assertEqual(self.host.calls[-1], ("link", "open", {"uri": uri, "title": "x"}))
         self.host.handoff = "none"
         self.assertEqual(gg.hand_off(uri, "x"), (False, "no app opens magnet links."))
         page = json.loads(gg.handoff_result(uri, "x", "Opened")["values"]["view"])
@@ -186,6 +186,17 @@ class Plugin(unittest.TestCase):
         result = json.loads(start_job("j1", {"point": "library.sources", "op": "acquire", "args": {}}, lambda p, s: reports.append((p, s))))
         self.assertEqual(reports, [(50, "half")])
         self.assertEqual(json.loads(result["values"]["download"])["fileName"], "y.zip")
+
+
+class Messages(unittest.TestCase):
+    def test_http_errors_in_plain_words(self):
+        self.assertEqual(gg.http_error("Nyaa", 403), "Nyaa refused the request. Try again later.")
+        self.assertEqual(gg.http_error("Nyaa", 503), "Nyaa is not answering right now. Try again later.")
+        self.assertEqual(gg.http_error("Nyaa", 429), "Nyaa asks to slow down. Try again in a minute.")
+        self.assertNotIn("HTTP", gg.http_error("Nyaa", 418))
+
+    def test_unreadable_page_keeps_the_exception_off_screen(self):
+        self.assertEqual(gg.unreadable("Nyaa", KeyError("title")), "Nyaa sent a page this plugin could not read. Try again later.")
 
 
 class Embed(unittest.TestCase):
